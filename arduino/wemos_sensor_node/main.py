@@ -295,6 +295,7 @@ def main():
     latest_temp_c = None
     latest_humidity = None
     latest_water_pct = None
+    latest_water_raw = None
     latest_distance_cm = 100.0
 
     while True:
@@ -314,8 +315,10 @@ def main():
         water_raw = None
         if due(now_ms, last_water_ms, WATER_READ_INTERVAL_MS):
             water_raw, water_pct = read_water_average(water_power)
-            if water_pct is not None and water_raw is not None:
+            if water_pct is not None:
                 latest_water_pct = water_pct
+                if water_raw is not None:
+                    latest_water_raw = water_raw
                 last_water_ms = now_ms
                 water_updated = True
 
@@ -344,7 +347,7 @@ def main():
                 latest_temp_c,
                 latest_humidity,
                 latest_water_pct,
-                water_raw,
+                latest_water_raw,
             )
             post_json(HOURLY_INGEST_URL, hourly_payload, "Hourly ingest")
 

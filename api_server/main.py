@@ -358,28 +358,24 @@ def ensure_session(conn, session_id: UUID) -> tuple[dict[str, Any], bool]:
             """
             INSERT INTO session (session_id)
             VALUES (%s)
-            ON CONFLICT DO NOTHING
-            RETURNING session_id, created_at, last_seen_at, ended_at, turn_count, meta
-            """,
-            (session_id,),
-        )
-        row = cur.fetchone()
-        if row is not None:
-            return row, True
-
-        cur.execute(
-            """
-            UPDATE session
+            ON CONFLICT (session_id) DO UPDATE
             SET last_seen_at = NOW()
-            WHERE session_id = %s
-            RETURNING session_id, created_at, last_seen_at, ended_at, turn_count, meta
+            RETURNING
+                session_id,
+                created_at,
+                last_seen_at,
+                ended_at,
+                turn_count,
+                meta,
+                (xmax = 0) AS inserted
             """,
             (session_id,),
         )
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=500, detail="session row could not be created")
-        return row, False
+        inserted = bool(row.pop("inserted", False))
+        return row, inserted
 
 
 def save_session_message(
@@ -485,7 +481,7 @@ async def handle_interaction(
         state = judge_sensor_state(active_sensor)
 
     with get_db_connection() as conn:
-        session_row, session_created = ensure_session(conn, resolved_session_id)
+        _, session_created = ensure_session(conn, resolved_session_id)
         history = fetch_recent_session_messages(conn, resolved_session_id)
         save_session_message(
             conn,
@@ -494,18 +490,20 @@ async def handle_interaction(
             text,
             meta={"source": source, "use_sensor_context": use_sensor_context},
         )
+        conn.commit()
 
-        llm = await request_llm(
-            text,
-            active_sensor,
-            state,
-            use_sensor_context=use_sensor_context,
-            history=history,
-        )
-        answer = str(llm.get("answer", "")).strip()
-        if not answer:
-            raise HTTPException(status_code=502, detail="LLM response has no answer")
+    llm = await request_llm(
+        text,
+        active_sensor,
+        state,
+        use_sensor_context=use_sensor_context,
+        history=history,
+    )
+    answer = str(llm.get("answer", "")).strip()
+    if not answer:
+        raise HTTPException(status_code=502, detail="LLM response has no answer")
 
+    with get_db_connection() as conn:
         save_session_message(conn, resolved_session_id, "assistant", answer, meta={"source": source})
 
         interaction_payload = active_sensor.model_dump() if active_sensor is not None else {}
