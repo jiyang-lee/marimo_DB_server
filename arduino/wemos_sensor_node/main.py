@@ -32,12 +32,13 @@ LCD_LINE_2 = 0xC0
 
 # Runtime config
 POLL_SECONDS = 3
-WATER_READ_INTERVAL_MS = 30 * 60 * 1000
+WATER_READ_INTERVAL_MS = 60 * 60 * 1000
 TEMP_HUMID_READ_INTERVAL_MS = 60 * 60 * 1000
+DEVICE_ID = "wemos_sensor_node"
 
 # Wi-Fi / API
 WIFI_SSID = "U+NetE3CC"
-WIFI_PASSWORD = "CHANGE_ME"
+WIFI_PASSWORD = "G7D99A@476"
 REALTIME_INGEST_URL = "http://192.168.219.56:8000/sensor/realtime-ingest"
 HOURLY_INGEST_URL = "http://192.168.219.56:8000/sensor/hourly-ingest"
 
@@ -226,20 +227,25 @@ def build_realtime_payload(lux, distance_cm, sound_value):
     if lux is None or distance_cm is None or sound_value is None:
         return None
     return {
+        "device_id": DEVICE_ID,
         "light": float(lux),
         "distance": float(distance_cm),
         "sound": float(sound_value),
     }
 
 
-def build_hourly_payload(temp_c, humidity, water_pct):
+def build_hourly_payload(temp_c, humidity, water_pct, water_raw=None):
     if temp_c is None or humidity is None or water_pct is None:
         return None
-    return {
+    payload = {
+        "device_id": DEVICE_ID,
         "temperature": float(temp_c),
         "humidity": float(humidity),
         "water_level": float(water_pct),
     }
+    if water_raw is not None:
+        payload["water_raw"] = int(water_raw)
+    return payload
 
 
 def post_json(url, body, label):
@@ -305,9 +311,10 @@ def main():
                 last_temp_humidity_ms = now_ms
                 temp_updated = True
 
+        water_raw = None
         if due(now_ms, last_water_ms, WATER_READ_INTERVAL_MS):
-            _water_raw, water_pct = read_water_average(water_power)
-            if water_pct is not None:
+            water_raw, water_pct = read_water_average(water_power)
+            if water_pct is not None and water_raw is not None:
                 latest_water_pct = water_pct
                 last_water_ms = now_ms
                 water_updated = True
@@ -337,6 +344,7 @@ def main():
                 latest_temp_c,
                 latest_humidity,
                 latest_water_pct,
+                water_raw,
             )
             post_json(HOURLY_INGEST_URL, hourly_payload, "Hourly ingest")
 
