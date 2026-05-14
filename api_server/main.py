@@ -1,5 +1,8 @@
 import os
+import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -19,6 +22,10 @@ KST = timezone(timedelta(hours=9), name="KST")
 REALTIME_RETENTION_DAYS = 7
 REALTIME_CLEANUP_INTERVAL_SECONDS = 7 * 24 * 60 * 60
 SESSION_HISTORY_LIMIT = 16
+RAG_SNIPPET_LIMIT = 3
+RAG_SNIPPET_CHAR_LIMIT = 280
+RAG_HISTORY_TURNS = 4
+RAG_FAQ_PATH = Path(__file__).resolve().parents[1] / "docs" / "rag_faq.md"
 last_realtime_cleanup_at: Optional[datetime] = None
 
 app = FastAPI(title="Marimo API Server", version="0.2.0")
@@ -292,6 +299,143 @@ def normalize_response_payload(payload: Any) -> Any:
     return normalize_response_value(payload)
 
 
+def normalize_rag_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def tokenize_rag_text(text: str) -> list[str]:
+    normalized = normalize_rag_text(text)
+    tokens = re.split(r"[^0-9a-zA-Z가-힣]+", normalized)
+    return [token for token in tokens if len(token) >= 2]
+
+
+def truncate_text(text: str, limit: int) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 1)].rstrip() + "…"
+
+
+@lru_cache(maxsize=1)
+def load_rag_sections() -> list[dict[str, str]]:
+    if not RAG_FAQ_PATH.exists():
+        return []
+
+    sections: list[dict[str, str]] = []
+    current_title: Optional[str] = None
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_title, current_lines
+        if current_title is None:
+            current_lines = []
+            return
+        body = "\n".join(line.rstrip() for line in current_lines).strip()
+        if body:
+            sections.append({"title": current_title, "body": body})
+        current_title = None
+        current_lines = []
+
+    for raw_line in RAG_FAQ_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("## "):
+            flush()
+            current_title = line[3:].strip()
+            continue
+        if line.startswith("# "):
+            continue
+        if current_title is None:
+            continue
+        current_lines.append(line)
+
+    flush()
+    return sections
+
+
+def score_rag_section(question_tokens: list[str], section: dict[str, str]) -> int:
+    title = normalize_rag_text(section["title"])
+    body = normalize_rag_text(section["body"])
+    score = 0
+    for token in question_tokens:
+        if token in title:
+            score += 3
+        if token in body:
+            score += 1
+    return score
+
+
+def select_rag_sections(query: str, limit: int = RAG_SNIPPET_LIMIT) -> list[dict[str, str]]:
+    question_tokens = tokenize_rag_text(query)
+    if not question_tokens:
+        return []
+
+    sections = load_rag_sections()
+    ranked = sorted(
+        sections,
+        key=lambda section: (-score_rag_section(question_tokens, section), section["title"]),
+    )
+    return [section for section in ranked if score_rag_section(question_tokens, section) > 0][:limit]
+
+
+def build_sensor_rag_note(sensor: Optional[SensorPayload], state: Optional[dict[str, Any]]) -> str:
+    if sensor is None:
+        return "센서 정보 없음"
+
+    parts = [
+        f"temperature={sensor.temperature}",
+        f"humidity={sensor.humidity}",
+        f"light={sensor.light}",
+        f"water_level={sensor.water_level}",
+        f"distance={sensor.distance}",
+        f"sound={sensor.sound}",
+    ]
+    if sensor and state:
+        alerts = state.get("alerts") or []
+        if alerts:
+            parts.append(f"alerts={', '.join(str(alert) for alert in alerts)}")
+        parts.append(f"level={state.get('level', 'chat')}")
+    return ", ".join(parts)
+
+
+def build_recent_history_note(history: list[dict[str, str]]) -> str:
+    recent = history[-RAG_HISTORY_TURNS:]
+    lines: list[str] = []
+    for item in recent:
+        role = (item.get("role") or "").strip().lower() or "user"
+        content = truncate_text(item.get("content") or "", 120)
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
+def build_rag_system_memo(
+    question: str,
+    history: list[dict[str, str]],
+    sensor: Optional[SensorPayload],
+    state: Optional[dict[str, Any]],
+    use_sensor_context: bool,
+) -> str:
+    sections = select_rag_sections(question)
+    parts = ["[RAG 참고]"]
+
+    if sections:
+        parts.append("문서 발췌:")
+        for section in sections:
+            excerpt = truncate_text(section["body"], RAG_SNIPPET_CHAR_LIMIT)
+            parts.append(f"- {section['title']}: {excerpt}")
+
+    history_note = build_recent_history_note(history)
+    if history_note:
+        parts.append("최근 대화:")
+        parts.append(history_note)
+
+    if use_sensor_context:
+        parts.append("센서 상태:")
+        parts.append(build_sensor_rag_note(sensor, state))
+
+    return "\n".join(parts)
+
+
 def extract_payload(row: Optional[dict[str, Any]]) -> dict[str, Any]:
     if row is None:
         return {}
@@ -447,12 +591,14 @@ async def request_llm(
     state: Optional[dict[str, Any]],
     use_sensor_context: bool,
     history: Optional[list[dict[str, str]]] = None,
+    system_memo: Optional[str] = None,
 ) -> dict[str, Any]:
     request_body = {
         "question": question,
         "sensor": sensor.model_dump() if sensor is not None else None,
         "state": state,
         "history": history or [],
+        "system_memo": system_memo,
         "use_sensor_context": use_sensor_context,
     }
     try:
@@ -492,12 +638,21 @@ async def handle_interaction(
         )
         conn.commit()
 
+    system_memo = build_rag_system_memo(
+        text,
+        history,
+        active_sensor,
+        state,
+        use_sensor_context=use_sensor_context,
+    )
+
     llm = await request_llm(
         text,
         active_sensor,
         state,
         use_sensor_context=use_sensor_context,
         history=history,
+        system_memo=system_memo,
     )
     answer = str(llm.get("answer", "")).strip()
     if not answer:
