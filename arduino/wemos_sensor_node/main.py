@@ -38,7 +38,7 @@ DEVICE_ID = "wemos_sensor_node"
 
 # Wi-Fi / API
 WIFI_SSID = "U+NetE3CC"
-WIFI_PASSWORD = "G7D99A@476"
+WIFI_PASSWORD = "CHANGE_ME"
 REALTIME_INGEST_URL = "http://192.168.219.56:8000/sensor/realtime-ingest"
 HOURLY_INGEST_URL = "http://192.168.219.56:8000/sensor/hourly-ingest"
 
