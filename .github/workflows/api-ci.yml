@@ -1,0 +1,33 @@
+name: API CI
+
+on:
+  push:
+    paths:
+      - "api_server/**"
+      - "requirements-api.txt"
+      - ".github/workflows/api-ci.yml"
+  pull_request:
+    paths:
+      - "api_server/**"
+      - "requirements-api.txt"
+      - ".github/workflows/api-ci.yml"
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-api.txt
+
+      - name: Run tests
+        run: python -m pytest api_server/tests -q

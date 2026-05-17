@@ -30,7 +30,7 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: "postgresql://marimo:marimo@db:5432/marimo"
-      LLM_SERVER_URL: "http://llm-server:8000"
+      LLM_SERVER_URL: "http://192.168.219.43:8001"
 
 volumes:
   db-data:

@@ -10,7 +10,7 @@ I2C_SDA_GPIO = 4
 HCSR04_TRIG_GPIO = 14
 HCSR04_ECHO_GPIO = 12
 DHT11_GPIO = 13
-KY038_DO_GPIO = 16
+
 WATER_POWER_GPIO = 14
 WATER_ADC = ADC(0)
 
@@ -223,14 +223,13 @@ def read_water_average(power_pin):
     return avg_raw, water_percent(avg_raw)
 
 
-def build_realtime_payload(lux, distance_cm, sound_value):
-    if lux is None or distance_cm is None or sound_value is None:
+def build_realtime_payload(lux, distance_cm):
+    if lux is None or distance_cm is None:
         return None
     return {
         "device_id": DEVICE_ID,
         "light": float(lux),
         "distance": float(distance_cm),
-        "sound": float(sound_value),
     }
 
 
@@ -285,7 +284,6 @@ def main():
     dht11 = dht.DHT11(Pin(DHT11_GPIO))
     hcsr04_trig = Pin(HCSR04_TRIG_GPIO, Pin.OUT)
     hcsr04_echo = Pin(HCSR04_ECHO_GPIO, Pin.IN)
-    sound_digital = Pin(KY038_DO_GPIO, Pin.IN)
     water_power = Pin(WATER_POWER_GPIO, Pin.OUT)
     water_power.off()
 
@@ -323,7 +321,6 @@ def main():
         distance_cm = read_hcsr04_cm(hcsr04_trig, hcsr04_echo)
         if distance_cm is not None:
             latest_distance_cm = distance_cm
-        sound_value = sound_digital.value()
 
         print(
             "T:", latest_temp_c,
@@ -332,11 +329,10 @@ def main():
             "W%:", latest_water_pct,
             "D:", distance_cm,
             "D(last):", latest_distance_cm,
-            "S:", sound_value,
         )
         update_lcd(i2c, lcd_addr, latest_temp_c, latest_humidity, latest_water_pct, latest_distance_cm)
 
-        realtime_payload = build_realtime_payload(lux, latest_distance_cm, sound_value)
+        realtime_payload = build_realtime_payload(lux, latest_distance_cm)
         post_json(REALTIME_INGEST_URL, realtime_payload, "Realtime ingest")
 
         if temp_updated or water_updated:

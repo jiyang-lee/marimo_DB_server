@@ -1,0 +1,1 @@
+SELECT * FROM sensor_readings ORDER BY created_at DESC
