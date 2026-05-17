@@ -96,7 +96,7 @@ No `.env` file is required for local Docker usage, but you can override:
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://marimo:marimo@db:5432/marimo` | Postgres connection string |
-| `LLM_SERVER_URL` | `http://192.168.219.43:8001` | External LLM server endpoint |
+| `LLM_SERVER_URL` | `http://<LLM_SERVER_IP>:8001` | External LLM server endpoint |
 
 ### 3. Run with Docker Compose
 
@@ -152,10 +152,10 @@ Upload `arduino/wemos_sensor_node/main.py` via MicroPython.
 Edit in `main.py` before flashing:
 
 ```python
-WIFI_SSID = "U+NetE3CC"
-WIFI_PASSWORD = "G7D99A@476"
-REALTIME_INGEST_URL = "http://192.168.219.56:8000/sensor/realtime-ingest"
-HOURLY_INGEST_URL = "http://192.168.219.56:8000/sensor/hourly-ingest"
+WIFI_SSID = "<YOUR_WIFI_SSID>"
+WIFI_PASSWORD = "<YOUR_WIFI_PASSWORD>"
+REALTIME_INGEST_URL = "http://<API_SERVER_IP>:8000/sensor/realtime-ingest"
+HOURLY_INGEST_URL = "http://<API_SERVER_IP>:8000/sensor/hourly-ingest"
 ```
 
 ---
